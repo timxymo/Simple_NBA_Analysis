@@ -1,0 +1,673 @@
+---
+title: "final"
+output: pdf_document
+---
+
+```{r}
+library(readr)
+team_201617 <- read_csv("~/Dropbox/2018 Fall/STAT 5630/Final Project/nba-enhanced-stats/2016-17_teamBoxScore.csv")
+team_201718 <- read_csv("~/Dropbox/2018 Fall/STAT 5630/Final Project/nba-enhanced-stats/2017-18_teamBoxScore.csv")
+```
+
+So we are using 2016-2017 season's data to calculate the point difference of halfs of each team to use it as soem sort of weight for their rankings. Since there is no explicit variable indicating that in the dataset. 
+```{r}
+ # 2016-2017 season
+team_201617$first_half <- team_201617$teamPTS1+team_201617$teamPTS2
+team_201617$second_half <- team_201617$teamPTS3+team_201617$teamPTS4
+team_201617$points_diff <- team_201617$second_half - team_201617$first_half
+
+team_201718$first_half <- team_201718$teamPTS1+team_201718$teamPTS2
+team_201718$second_half <- team_201718$teamPTS3+team_201718$teamPTS4
+team_201718$points_diff <- team_201718$second_half - team_201718$first_half
+
+#create a df tbs11 for first half of first season
+team_201617<-as.data.frame(team_201617)
+team_201617$teamAbbr<-as.factor(team_201617$teamAbbr)
+team_201617<-team_201617[order(team_201617$teamAbbr),]
+team_201617$id<-sequence(tabulate(team_201617$teamAbbr)) #This line is the SHIT
+#ATL<-team_201617[which(team_201617$teamAbbr=="ATL"),]
+
+#install.packages("doBy")
+library(doBy)
+# create points difference and their 5, 25, 50, 75, and 95 percentile and store them 
+tbs11<-team_201617[which(team_201617$id<=41),] #first season first half
+tbsagg11<-summaryBy(points_diff~teamAbbr,data=tbs11,FUN=function(x) quantile(x,c(0.05,0.25,0.50,0.75,0.95))) # so is this one
+
+tbs12<-team_201617[which(team_201617$id>=42),] #first season second half
+tbsagg12<-summaryBy(points_diff~teamAbbr,data=tbs12,FUN=function(x) quantile(x,c(0.05,0.25,0.50,0.75,0.95)))
+
+
+
+
+ # 2017-2018 season
+team_201718<-as.data.frame(team_201718)
+team_201718$teamAbbr<-as.factor(team_201718$teamAbbr)
+team_201718<-team_201718[order(team_201718$teamAbbr),]
+team_201718$id<-sequence(tabulate(team_201718$teamAbbr))
+#ATL<-team_201718[which(team_201718$teamAbbr=="ATL"),]
+
+#merge the percentile columns with 201718 season data
+#first half to first half, second half to second half
+finaltbs21<-team_201718[which(team_201718$id<=41),]
+tbsagg21<-merge(finaltbs21, tbsagg11, by.x='teamAbbr')
+
+finaltbs22<-team_201718[which(team_201718$id>=42),]
+tbsagg22<-merge(finaltbs22, tbsagg12, by.x='teamAbbr')
+
+finaltbs<-rbind(tbsagg21,tbsagg22) #2017-2018 season data
+
+finaltbs$half_lead <- NA
+
+
+for (i in 1:nrow(finaltbs)){
+  if(finaltbs[i,]$teamPTS1+finaltbs[i,]$teamPTS2 > finaltbs[i,]$opptPTS1+finaltbs[i,]$opptPTS2){
+    finaltbs[i,133] = 1
+  }else if (finaltbs[i,]$teamPTS1+finaltbs[i,]$teamPTS2 < finaltbs[i,]$opptPTS1+finaltbs[i,]$opptPTS2){
+    finaltbs[i,133] = 0
+  }else{
+    finaltbs[i,133] = 2
+  }
+}
+
+
+# calculate the points difference at the halftime
+finaltbs$half_diff <- finaltbs$teamPTS1+finaltbs$teamPTS2-finaltbs$opptPTS1-finaltbs$opptPTS2
+finaltbs$full_diff <- finaltbs$teamPTS-finaltbs$opptPTS
+#finaltbs$halfpoint <- finaltbs$teamPTS1+finaltbs$teamPTS2 
+
+oppt <- grep("oppt",colnames(finaltbs)) 
+finaltbs <- finaltbs[,-oppt]
+
+# code the game result into 0/1, 1=Win, 0=Loss
+finaltbs$teamRslt[which(finaltbs$teamRslt=="Win")]=1
+finaltbs$teamRslt[which(finaltbs$teamRslt=="Loss")]=0
+
+# code the game location into 0/1, 1=Home, 0=Away
+finaltbs$teamLoc[which(finaltbs$teamLoc=="Home")]=1
+finaltbs$teamLoc[which(finaltbs$teamLoc=="Away")]=0
+
+# check previous game result
+prevs_game<-as.data.frame(finaltbs$teamRslt)
+prevs_game1 <- rbind(0, prevs_game)
+prevs_game1<-prevs_game1[-2461,]
+finaltbs <- cbind(finaltbs,prevs_game1)
+finaltbs$prevs_game1[which(finaltbs$id==1)]<-0
+
+ # create another df with just numeric variables
+finaltbs <- finaltbs[,-c(1:12)]
+
+#take out the variables containing %
+colnames(finaltbs)[60:64] <- c(substr(colnames(finaltbs)[60:64], 1, nchar(colnames(finaltbs)[60:64])-1))
+finaltbs <- finaltbs[,-grep("%",colnames(finaltbs))]
+
+
+
+```
+
+
+#EDA
+
+```{r}
+teamwin<-data.frame(table(tbs$teamAbbr, tbs$teamRslt))
+library(reshape)
+
+w <- reshape(teamwin, 
+             timevar = "Var2",
+             idvar = c("Var1"),
+             direction = "wide")
+w$percentage<-round((((w$Freq.Win/(w$Freq.Loss+w$Freq.Win))*100)),digits=1)
+w$total<-(w$Freq.Loss+w$Freq.Win) # make sure its 164
+w<-w[order(w$percentage),] 
+
+
+#library(xlsx)
+#write.xlsx(w, "c:/mydata.xlsx")
+
+table(tbs$teamConf)
+table(tbs$teamDiv)
+
+library(plyr)
+opp<-tbs[which(tbs$teamLoc=="Home"),]
+opp1<-as.data.frame(count(opp, vars = c("teamAbbr", "opptAbbr")))
+
+
+table(tbs$teamAbbr,tbs$opptAbbr)
+library(ggplot2)
+# halftime points diff vs game result
+ggplot(tbs, aes(x=tbs$teamRslt,y=tbs$half_diff,fill=tbs$teamRslt))+geom_boxplot(notch = T, varwidth = T)+
+  labs(y="Point Difference at Halftime", x = "Game Result")+
+  theme(legend.position="none")
+
+
+
+
+# home vs away game
+ggplot(tbs, aes(x=tbs$teamLoc,y=tbs$half_diff,fill=tbs$teamRslt))+geom_boxplot(notch = T, varwidth = T)+
+  labs(y="Point Difference at Halftime", x = "Location of Game" ,fill="Game Result")
+
+# lead at half time vs game result
+ggplot(tbs, aes(x=as.factor(tbs$half_lead),y=tbs$half_diff,fill=tbs$teamRslt))+geom_boxplot(notch = T, varwidth = T)+
+  labs(y="Point Difference at Halftime", x = "Lead at Halftime" ,fill="Game Result")+
+  scale_x_discrete(labels = c('No Lead','Lead','Tie'))
+
+# points difference in halftime and entire game
+ggplot(opp, aes(x=opp$half_diff,y=opp$full_diff))+geom_point(aes(color=as.factor(opp$half_lead)))+geom_hline(yintercept = 0)+labs(x="Point Difference at Halftime", y = "Point difference at End of Game")+
+  scale_color_discrete(name = "Lead Type\nat Halftime", labels=c("No Lead","Lead","Tie"))
+#how to add a line to depict win or lose 
+
+#figure out the spread for pairs of teams
+
+ # heat map
+hmvar <- unlist(lapply(tbs, is.numeric))  
+heatmapvar <- tbs[,hmvar]
+heatmapvar <- heatmapvar[,1:51,105:107]
+grep("%",colnames(heatmapvar))
+colnames(heatmapvar)[grep("%",colnames(heatmapvar))]
+ # we should just delete all the ones with percentage, because they can be calculated from other varibles, so would be a linear combination of some other variables.
+heatmapvar <- heatmapvar[,-grep("%",colnames(heatmapvar))]
+
+cormap <- round(cor(heatmapvar),2) #51+3=54 variables for the initial heat map
+ # find the variables are % of corresponding counts
+melted_cormat <- melt(cormap)
+#head(melted_cormat)
+ggplot(data = melted_cormat, aes(x=X1, y=X2, fill=value)) + geom_tile() + theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 8, hjust = 1)) + theme(axis.text.y = element_text(angle = 45, vjust = 1, size = 8, hjust = 1)) + coord_fixed()
+
+
+
+```
+
+#(1)Half_lead 
+Will leading in the first half determine a win?
+Based on the coded variable for leading in the first half, methods such as logistic regression, classification using a tree and pruning techniques, KNN, SVM, and random forest will be used to determine the effect of this variable on the final result of the game. A model will be chosen based off of accuracy.
+
+```{r}
+ # Random Forest
+set.seed(23)
+library(randomForest)
+#teamRslt, id, points difference quantiles, and might sub with half_diff
+finaltbs2 <- finaltbs[,c(2,45:50,52)]
+train <- sample(1:nrow(finaltbs2), nrow(finaltbs2)*4/5)
+finaltbs2.train <- finaltbs2[train,]
+finaltbs2.test <- finaltbs2[-train,]
+
+finaltbs2.train$teamRslt <- as.factor(finaltbs2.train$teamRslt)
+rf.fit <- randomForest(finaltbs2.train$teamRslt~., data=finaltbs2.train, n.tree = 500, mtry=3,nodesize=1)
+rf.fit
+rf.fit2 = randomForest(finaltbs2.train[,-1], finaltbs2.train$teamRslt, ntree = 2000, mtry = 3, nodesize = 1, importance = TRUE)
+rf.fit2
+barplot(importance(rf.fit2)[,4])
+colnames(finaltbs2)[order(importance(rf.fit2)[,4], decreasing = TRUE)+1]
+
+# tried using all the variables didnt work well
+#colnames(finaltbs)[38:39] <- c("teamASSTO","teamSTLTO")
+#finaltbs <- finaltbs[,c(2,1,3:53)]
+#train <- sample(1:nrow(finaltbs), nrow(finaltbs)*2/3)
+#finaltbs.train <- finaltbs[train,]
+#finaltbs.test <- finaltbs[-train,]
+#finaltbs.train$teamRslt <- as.factor(finaltbs.train$teamRslt)
+#rf.fit <- randomForest(finaltbs.train$teamRslt~., data=finaltbs.train, n.tree = 2000, mtry=7,nodesize=1)
+#rf.fit
+
+
+#double loop to tune for best parameter
+m = round(sqrt(dim(finaltbs2.train)[2]-1)) # sqrt(p) rounded to integer
+for (i in c(500,1000,2000)){ # try three different values for number of trees
+  for (j in c(2:6)){ # try three different values for number of predictors to sample
+    set.seed(123)
+    rf.fit=randomForest(as.factor(teamRslt) ~., data=finaltbs2.train,  mtry=j, ntree=i, nodesize=1)
+   
+     # get oob error rate for training data
+    yhat.train=rf.fit$predicted
+    y.train=finaltbs2.train$teamRslt
+    error_rate <- mean(y.train != yhat.train)
+    
+    # test error
+    yhat.test = predict(rf.fit, finaltbs2.test[,-1])
+    y.test = finaltbs2.test$teamRslt
+    table(y.test,yhat.test)
+    test.error <- mean(y.test != yhat.test) # test error
+
+if (exists('oob_err')==FALSE | exists('test_error') == FALSE){
+      oob_err = c(i,j,error_rate) # create initial data frame
+      test_error = c(i, j, test.error)
+    }else{
+      oob_err = rbind(oob_err, c(i,j,error_rate)) # append to data frame of error rates, ntree, and mtry
+      test_error = rbind(test_error, c(i, j, test.error))
+    }
+  }
+}
+oob_error <- as.data.frame(oob_err) 
+colnames(oob_error) <- c('ntree', 'mtry', 'oob_error_rate') 
+test_error <- as.data.frame(test_error)
+colnames(test_error) <- c('ntree', 'mtry', "test_error") 
+errors <- merge(oob_error, test_error, by=c('ntree','mtry'))
+errors$mtry <- as.factor(errors$mtry) # mtry to factor
+errors
+
+new.rf <- randomForest(finaltbs2.train$teamRslt~ ., data=finaltbs2.train, n.tree=2000, mtry=2, nodesize=1)
+# fit the model with test set
+yhat.test = predict(new.rf, finaltbs2.test[,-1])
+y.test = finaltbs2.test$teamRslt
+rf.table <- table(yhat.test, y.test)
+test.error <- mean(y.test != yhat.test) # test error
+
+rf.table
+# accuracy
+accuracy.rate <- (rf.table[1,1]+rf.table[2,2])/(rf.table[1,1]+rf.table[1,2]+rf.table[2,1]+rf.table[2,2])
+accuracy.rate
+ 
+# sensitivity rate (num of spam obs which are correctly classified as spam in the testing set/ num of total spam obs in the testing set)
+sensitivity.rate <- rf.table[2,2]/(rf.table[2,2]+rf.table[2,1])
+sensitivity.rate
+ 
+# specificity rate (num of non-spam obs which are correctly classified as non-spam in the testing set / num of total non-spam obs in the testing set)
+specificity.rate <- rf.table[1,1]/(rf.table[1,1]+rf.table[1,2])
+specificity.rate
+
+
+
+##################################################################################################################
+#################################################################################################################@
+##################################################################################################################
+
+# SVM
+library(e1071)
+library(MASS)
+svm.fit <- svm(as.factor(finaltbs2.train$teamRslt) ~ ., data = finaltbs2.train, kernel = "radial", cost = 10, scale = FALSE)
+summary(svm.fit)
+table(predict(svm.fit),finaltbs2.train$teamRslt)
+table(predict(svm.fit,finaltbs2.test[,-1]),finaltbs2.test$teamRslt)
+
+ # different tuning methods
+tuned <- tune.svm(as.factor(teamRslt) ~ ., data = finaltbs2.train, cost = 10^(-2:2), gamma = 10^(-6:-1))
+summary(tuned)
+
+best.cost=tuned$best.parameters[[2]] 
+best.gamma=tuned$best.parameters[[1]] 
+
+new.svm <- svm(as.factor(finaltbs2.train$teamRslt) ~ ., data = finaltbs2.train, kernel = "radial", cost = best.cost, gamma=best.gamma, scale = FALSE)
+summary(new.svm)
+svm.table <- table(predict(new.svm,finaltbs2.test[,-1]),finaltbs2.test$teamRslt)
+svm.table
+
+# accuracy
+accuracy.rate <- (svm.table[1,1]+svm.table[2,2])/(svm.table[1,1]+svm.table[1,2]+svm.table[2,1]+svm.table[2,2])
+accuracy.rate
+ 
+# sensitivity rate (num of spam obs which are correctly classified as spam in the testing set/ num of total spam obs in the testing set)
+sensitivity.rate <- svm.table[2,2]/(svm.table[2,2]+svm.table[2,1])
+sensitivity.rate
+ 
+# specificity rate (num of non-spam obs which are correctly classified as non-spam in the testing set / num of total non-spam obs in the testing set)
+specificity.rate <- svm.table[1,1]/(svm.table[1,1]+svm.table[1,2])
+specificity.rate
+
+
+##################################################################################################################
+#################################################################################################################@
+##################################################################################################################
+
+
+
+ # LDA
+lda.fit <- lda(teamRslt ~ ., data = finaltbs2.train)
+lda.fit
+plot(lda.fit)
+lda.pred <- predict(lda.fit, finaltbs2.test)
+lda.pred$class
+table(lda.pred$class, finaltbs2.test$teamRslt)
+mean(lda.pred$class != finaltbs2.test$teamRslt) #test error
+library(caret)
+modelFit<- train(teamRslt~., method='lda',preProcess=c('scale', 'center'), data=finaltbs2.train)
+confusionMatrix(as.factor(finaltbs2.test$teamRslt), predict(modelFit, finaltbs2.test))
+
+
+
+##################################################################################################################
+#################################################################################################################@
+##################################################################################################################
+
+
+
+ # QDA
+qda.fit <- qda(teamRslt ~ ., data = finaltbs2.train)
+qda.fit
+qda.pred <- predict(qda.fit, finaltbs2.test)
+qda.pred$class
+table(qda.pred$class, finaltbs2.test$teamRslt)
+mean(qda.pred$class != finaltbs2.test$teamRslt)
+modelFit<- train(teamRslt~., method='qda',preProcess=c('scale', 'center'), data=finaltbs2.train)
+confusionMatrix(as.factor(finaltbs2.test$teamRslt), predict(modelFit, finaltbs2.test))
+
+```
+
+
+#2)Team location home/away 
+
+Does a home versus away game affect the results of the game?
+
+```{r}
+ # Random Forest
+library(randomForest)
+set.seed(23)
+#teamRslt, id, points difference quantiles, and might sub with half_diff
+finaltbs2 <- finaltbs[,c(2,1,45:50)]
+train <- sample(1:nrow(finaltbs2), nrow(finaltbs2)*4/5)
+finaltbs2.train <- finaltbs2[train,]
+finaltbs2.test <- finaltbs2[-train,]
+
+finaltbs2.train$teamRslt <- as.factor(finaltbs2.train$teamRslt)
+rf.fit <- randomForest(finaltbs2.train$teamRslt~., data=finaltbs2.train, n.tree = 500, mtry=3,nodesize=5)
+rf.fit
+rf.fit2 = randomForest(finaltbs2.train[,-1], finaltbs2.train$teamRslt, ntree = 2000, mtry = 3, nodesize = 1, importance = TRUE)
+rf.fit2
+barplot(importance(rf.fit2)[,4])
+colnames(finaltbs2)[order(importance(rf.fit2)[,4], decreasing = TRUE)+1]
+
+# tried using all the variables didnt work well
+#colnames(finaltbs)[38:39] <- c("teamASSTO","teamSTLTO")
+#finaltbs <- finaltbs[,c(2,1,3:53)]
+#train <- sample(1:nrow(finaltbs), nrow(finaltbs)*2/3)
+#finaltbs.train <- finaltbs[train,]
+#finaltbs.test <- finaltbs[-train,]
+#finaltbs.train$teamRslt <- as.factor(finaltbs.train$teamRslt)
+#rf.fit <- randomForest(finaltbs.train$teamRslt~., data=finaltbs.train, n.tree = 2000, mtry=7,nodesize=1)
+#rf.fit
+
+
+#double loop to tune for best parameter
+m = round(sqrt(dim(finaltbs2.train)[2]-1)) # sqrt(p) rounded to integer
+for (i in c(500,1000,2000)){ # try three different values for number of trees
+  for (j in c(2:6)){ # try three different values for number of predictors to sample
+    rf.fit=randomForest(as.factor(teamRslt) ~., data=finaltbs2.train,  mtry=j, ntree=i, nodesize=1)
+   
+     # get oob error rate for training data
+    yhat.train=rf.fit$predicted
+    y.train=finaltbs2.train$teamRslt
+    error_rate <- mean(y.train != yhat.train)
+    
+    # test error
+    yhat.test = predict(rf.fit, finaltbs2.test[,-1])
+    y.test = finaltbs2.test$teamRslt
+    table(y.test,yhat.test)
+    test.error <- mean(y.test != yhat.test) # test error
+
+if (exists('oob_err')==FALSE | exists('test_error') == FALSE){
+      oob_err = c(i,j,error_rate) # create initial data frame
+      test_error = c(i, j, test.error)
+    }else{
+      oob_err = rbind(oob_err, c(i,j,error_rate)) # append to data frame of error rates, ntree, and mtry
+      test_error = rbind(test_error, c(i, j, test.error))
+    }
+  }
+}
+
+oob_error <- as.data.frame(oob_err) 
+colnames(oob_error) <- c('ntree', 'mtry', 'oob_error_rate') 
+test_error <- as.data.frame(test_error)
+colnames(test_error) <- c('ntree', 'mtry', "test_error") 
+errors <- merge(oob_error, test_error, by=c('ntree','mtry'))
+errors$mtry <- as.factor(errors$mtry) # mtry to factor
+errors
+
+new.rf <- randomForest(finaltbs2.train$teamRslt~ ., data=finaltbs2.train, n.tree=2000, mtry=2, nodesize=1)
+# fit the model with test set
+yhat.test = predict(new.rf, finaltbs2.test[,-1])
+y.test = finaltbs2.test$teamRslt
+rf.table <- table(yhat.test, y.test)
+test.error <- mean(y.test != yhat.test) # test error
+
+rf.table
+# accuracy
+accuracy.rate <- (rf.table[1,1]+rf.table[2,2])/(rf.table[1,1]+rf.table[1,2]+rf.table[2,1]+rf.table[2,2])
+accuracy.rate
+ 
+# sensitivity rate (num of spam obs which are correctly classified as spam in the testing set/ num of total spam obs in the testing set)
+sensitivity.rate <- rf.table[2,2]/(rf.table[2,2]+rf.table[2,1])
+sensitivity.rate
+ 
+# specificity rate (num of non-spam obs which are correctly classified as non-spam in the testing set / num of total non-spam obs in the testing set)
+specificity.rate <- rf.table[1,1]/(rf.table[1,1]+rf.table[1,2])
+specificity.rate
+
+
+
+##################################################################################################################
+#################################################################################################################@
+##################################################################################################################
+
+# SVM
+library(e1071)
+library(MASS)
+svm.fit <- svm(as.factor(finaltbs2.train$teamRslt) ~ ., data = finaltbs2.train, kernel = "radial", cost = 10, scale = FALSE)
+summary(svm.fit)
+table(predict(svm.fit),finaltbs2.train$teamRslt)
+table(predict(svm.fit,finaltbs2.test[,-1]),finaltbs2.test$teamRslt)
+
+ # different tuning methods
+tuned <- tune.svm(as.factor(teamRslt) ~ ., data = finaltbs2.train, cost = 10^(-2:2), gamma = 10^(-6:-1))
+summary(tuned)
+
+best.cost=tuned$best.parameters[[2]] 
+best.gamma=tuned$best.parameters[[1]] 
+
+new.svm <- svm(as.factor(finaltbs2.train$teamRslt) ~ ., data = finaltbs2.train, kernel = "radial", cost = best.cost, gamma=best.gamma, scale = FALSE)
+summary(new.svm)
+svm.table <- table(predict(new.svm,finaltbs2.test[,-1]),finaltbs2.test$teamRslt)
+svm.table
+
+# accuracy
+accuracy.rate <- (svm.table[1,1]+svm.table[2,2])/(svm.table[1,1]+svm.table[1,2]+svm.table[2,1]+svm.table[2,2])
+accuracy.rate
+ 
+# sensitivity rate (num of spam obs which are correctly classified as spam in the testing set/ num of total spam obs in the testing set)
+sensitivity.rate <- svm.table[2,2]/(svm.table[2,2]+svm.table[2,1])
+sensitivity.rate
+ 
+# specificity rate (num of non-spam obs which are correctly classified as non-spam in the testing set / num of total non-spam obs in the testing set)
+specificity.rate <- svm.table[1,1]/(svm.table[1,1]+svm.table[1,2])
+specificity.rate
+
+
+##################################################################################################################
+#################################################################################################################@
+##################################################################################################################
+
+
+
+ # LDA
+lda.fit <- lda(teamRslt ~ ., data = finaltbs2.train)
+lda.fit
+plot(lda.fit)
+lda.pred <- predict(lda.fit, finaltbs2.test)
+lda.pred$class
+table(lda.pred$class, finaltbs2.test$teamRslt)
+mean(lda.pred$class != finaltbs2.test$teamRslt) #test error
+library(caret)
+modelFit<- train(teamRslt~., method='lda',preProcess=c('scale', 'center'), data=finaltbs2.train)
+confusionMatrix(as.factor(finaltbs2.test$teamRslt), predict(modelFit, finaltbs2.test))
+
+
+##################################################################################################################
+#################################################################################################################@
+##################################################################################################################
+
+
+
+
+ # QDA
+qda.fit <- qda(teamRslt ~ ., data = finaltbs2.train)
+qda.fit
+qda.pred <- predict(qda.fit, finaltbs2.test)
+qda.pred$class
+table(qda.pred$class, finaltbs2.test$teamRslt)
+mean(qda.pred$class != finaltbs2.test$teamRslt)
+modelFit<- train(teamRslt~., method='qda',preProcess=c('scale', 'center'), data=finaltbs2.train)
+confusionMatrix(as.factor(finaltbs2.test$teamRslt), predict(modelFit, finaltbs2.test))
+```
+
+
+#(3) Previous game result
+
+```{r}
+ # Random Forest
+library(randomForest)
+set.seed(23)
+#teamRslt, id, points difference quantiles, and might sub with half_diff
+finaltbs2 <- finaltbs[,c(2,45:50,54)]
+train <- sample(1:nrow(finaltbs2), nrow(finaltbs2)*4/5)
+finaltbs2.train <- finaltbs2[train,]
+finaltbs2.test <- finaltbs2[-train,]
+
+finaltbs2.train$teamRslt <- as.factor(finaltbs2.train$teamRslt)
+rf.fit <- randomForest(finaltbs2.train$teamRslt~., data=finaltbs2.train, n.tree = 500, mtry=3,nodesize=5)
+rf.fit
+rf.fit2 = randomForest(finaltbs2.train[,-1], finaltbs2.train$teamRslt, ntree = 2000, mtry = 3, nodesize = 1, importance = TRUE)
+rf.fit2
+barplot(importance(rf.fit2)[,4])
+colnames(finaltbs2)[order(importance(rf.fit2)[,4], decreasing = TRUE)+1]
+
+# tried using all the variables didnt work well
+#colnames(finaltbs)[38:39] <- c("teamASSTO","teamSTLTO")
+#finaltbs <- finaltbs[,c(2,1,3:53)]
+#train <- sample(1:nrow(finaltbs), nrow(finaltbs)*2/3)
+#finaltbs.train <- finaltbs[train,]
+#finaltbs.test <- finaltbs[-train,]
+#finaltbs.train$teamRslt <- as.factor(finaltbs.train$teamRslt)
+#rf.fit <- randomForest(finaltbs.train$teamRslt~., data=finaltbs.train, n.tree = 2000, mtry=7,nodesize=1)
+#rf.fit
+
+
+#double loop to tune for best parameter
+m = round(sqrt(dim(finaltbs2.train)[2]-1)) # sqrt(p) rounded to integer
+for (i in c(500,1000,2000)){ # try three different values for number of trees
+  for (j in c(2:6)){ # try three different values for number of predictors to sample
+    rf.fit=randomForest(as.factor(teamRslt) ~., data=finaltbs2.train,  mtry=j, ntree=i, nodesize=1)
+   
+     # get oob error rate for training data
+    yhat.train=rf.fit$predicted
+    y.train=finaltbs2.train$teamRslt
+    error_rate <- mean(y.train != yhat.train)
+    
+    # test error
+    yhat.test = predict(rf.fit, finaltbs2.test[,-1])
+    y.test = finaltbs2.test$teamRslt
+    table(y.test,yhat.test)
+    test.error <- mean(y.test != yhat.test) # test error
+
+if (exists('oob_err')==FALSE | exists('test_error') == FALSE){
+      oob_err = c(i,j,error_rate) # create initial data frame
+      test_error = c(i, j, test.error)
+    }else{
+      oob_err = rbind(oob_err, c(i,j,error_rate)) # append to data frame of error rates, ntree, and mtry
+      test_error = rbind(test_error, c(i, j, test.error))
+    }
+  }
+}
+
+oob_error <- as.data.frame(oob_err) 
+colnames(oob_error) <- c('ntree', 'mtry', 'oob_error_rate') 
+test_error <- as.data.frame(test_error)
+colnames(test_error) <- c('ntree', 'mtry', "test_error") 
+errors <- merge(oob_error, test_error, by=c('ntree','mtry'))
+errors$mtry <- as.factor(errors$mtry) # mtry to factor
+errors
+
+new.rf <- randomForest(finaltbs2.train$teamRslt~ ., data=finaltbs2.train, n.tree=500, mtry=2, nodesize=1)
+# fit the model with test set
+yhat.test = predict(new.rf, finaltbs2.test[,-1])
+y.test = finaltbs2.test$teamRslt
+rf.table <- table(yhat.test, y.test)
+test.error <- mean(y.test != yhat.test) # test error
+
+rf.table
+# accuracy
+accuracy.rate <- (rf.table[1,1]+rf.table[2,2])/(rf.table[1,1]+rf.table[1,2]+rf.table[2,1]+rf.table[2,2])
+accuracy.rate
+ 
+# sensitivity rate (num of spam obs which are correctly classified as spam in the testing set/ num of total spam obs in the testing set)
+sensitivity.rate <- rf.table[2,2]/(rf.table[2,2]+rf.table[2,1])
+sensitivity.rate
+ 
+# specificity rate (num of non-spam obs which are correctly classified as non-spam in the testing set / num of total non-spam obs in the testing set)
+specificity.rate <- rf.table[1,1]/(rf.table[1,1]+rf.table[1,2])
+specificity.rate
+
+
+
+##################################################################################################################
+#################################################################################################################@
+##################################################################################################################
+
+# SVM
+library(e1071)
+library(MASS)
+svm.fit <- svm(as.factor(finaltbs2.train$teamRslt) ~ ., data = finaltbs2.train, kernel = "radial", cost = 10, scale = FALSE)
+summary(svm.fit)
+table(predict(svm.fit),finaltbs2.train$teamRslt)
+table(predict(svm.fit,finaltbs2.test[,-1]),finaltbs2.test$teamRslt)
+
+ # different tuning methods
+tuned <- tune.svm(as.factor(teamRslt) ~ ., data = finaltbs2.train, cost = 10^(-2:2), gamma = 10^(-6:-1))
+summary(tuned)
+
+best.cost=tuned$best.parameters[[2]] 
+best.gamma=tuned$best.parameters[[1]] 
+
+new.svm <- svm(as.factor(finaltbs2.train$teamRslt) ~ ., data = finaltbs2.train, kernel = "radial", cost = best.cost, gamma=best.gamma, scale = FALSE)
+summary(new.svm)
+svm.table <- table(predict(new.svm,finaltbs2.test[,-1]),finaltbs2.test$teamRslt)
+svm.table
+
+# accuracy
+accuracy.rate <- (svm.table[1,1]+svm.table[2,2])/(svm.table[1,1]+svm.table[1,2]+svm.table[2,1]+svm.table[2,2])
+accuracy.rate
+ 
+# sensitivity rate (num of spam obs which are correctly classified as spam in the testing set/ num of total spam obs in the testing set)
+sensitivity.rate <- svm.table[2,2]/(svm.table[2,2]+svm.table[2,1])
+sensitivity.rate
+ 
+# specificity rate (num of non-spam obs which are correctly classified as non-spam in the testing set / num of total non-spam obs in the testing set)
+specificity.rate <- svm.table[1,1]/(svm.table[1,1]+svm.table[1,2])
+specificity.rate
+
+
+##################################################################################################################
+#################################################################################################################@
+##################################################################################################################
+
+
+
+ # LDA
+lda.fit <- lda(teamRslt ~ ., data = finaltbs2.train)
+lda.fit
+plot(lda.fit)
+lda.pred <- predict(lda.fit, finaltbs2.test)
+lda.pred$class
+table(lda.pred$class, finaltbs2.test$teamRslt)
+mean(lda.pred$class != finaltbs2.test$teamRslt) #test error
+library(caret)
+modelFit<- train(teamRslt~., method='lda',preProcess=c('scale', 'center'), data=finaltbs2.train)
+confusionMatrix(as.factor(finaltbs2.test$teamRslt), predict(modelFit, finaltbs2.test))
+
+
+##################################################################################################################
+#################################################################################################################@
+##################################################################################################################
+
+
+
+
+ # QDA
+qda.fit <- qda(teamRslt ~ ., data = finaltbs2.train)
+qda.fit
+qda.pred <- predict(qda.fit, finaltbs2.test)
+qda.pred$class
+table(qda.pred$class, finaltbs2.test$teamRslt)
+mean(qda.pred$class != finaltbs2.test$teamRslt)
+modelFit<- train(teamRslt~., method='qda',preProcess=c('scale', 'center'), data=finaltbs2.train)
+confusionMatrix(as.factor(finaltbs2.test$teamRslt), predict(modelFit, finaltbs2.test))
+
+```
+
+
